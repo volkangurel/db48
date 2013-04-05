@@ -34,6 +34,7 @@ _FIELD_HEADER_SZ = 8
 
 FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
+FL_TYPE_STR = 3
 
 
 class Table(object):
@@ -47,12 +48,12 @@ class Table(object):
         assert not self.initialized
         self._fd = os.open(path, os.O_RDWR | os.O_CREAT)
         os.lseek(self._fd, _TABLE_SZ-1, os.SEEK_SET)
-        os.write(self._fd, '\x00')
+        os.write(self._fd, b'\x00')
         self._mmap = mmap.mmap(self._fd, _TABLE_SZ)
         self._mmap[_TABLE_MAGIC_OFF:_TABLE_MAGIC_OFF+4] = struct.pack(">I", _TABLE_MAGIC)
         self._mmap[_TABLE_CSUM_OFF:_TABLE_CSUM_OFF+4] = struct.pack(">I", 0)
         for i in range(_TABLE_NUM_REGIONS):
-            self._mmap[i+_TABLE_CSUM_OFF] = struct.pack("B", 0)
+            self._mmap[i+_TABLE_CSUM_OFF:i+_TABLE_CSUM_OFF+1] = struct.pack("B", 0)
         for i in range(_TABLE_NUM_REGIONS):
             r = Region(self, i)
             r.create()
@@ -124,7 +125,7 @@ class Table(object):
         raise NoSpace()
 
     def _find_region_with_rec(self, rec_addr):
-        ndx = rec_addr / _REGION_USABLE_SZ
+        ndx = rec_addr // _REGION_USABLE_SZ
         return Region(self, ndx)
 
 
@@ -167,7 +168,7 @@ class Region(object):
     def _store_fmes(self, fmes):
         assert len(fmes) == _REGION_NUM_FMES
         raw_fmes = [struct.pack(">HH", fme.offset, fme.length) for fme in fmes]
-        self.table._mmap[self.offset:self.offset+_REGION_HEADER_SZ] = "".join(raw_fmes)
+        self.table._mmap[self.offset:self.offset+_REGION_HEADER_SZ] = b"".join(raw_fmes)
 
         temp_fmes = self._load_fmes()
         for i in range(len(temp_fmes)):
@@ -222,7 +223,7 @@ class FieldList(object):
         return _FLS_HEADER_SZ + sum([fl.length() for fl in self.fls])
 
     def store(self, offset, mmap_):
-        raw_fls = "".join([fl.as_raw() for fl in self.fls])
+        raw_fls = b"".join([fl.as_raw() for fl in self.fls])
         raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, 0)
         assert len(raw_header) == _FLS_HEADER_SZ
         raw = raw_header + raw_fls
@@ -259,6 +260,9 @@ class Field(object):
         elif self.type == FL_TYPE_BYTES:
             length += 2
             length += len(self.value)
+        elif self.type == FL_TYPE_STR:
+            length += 2
+            length += len(self.value.encode())
         return length
 
     def as_raw(self):
@@ -269,6 +273,10 @@ class Field(object):
         elif self.type == FL_TYPE_BYTES:
             out += struct.pack(">H", len(self.value))
             out += self.value
+        elif self.type == FL_TYPE_STR:
+            value = self.value.encode('utf8')
+            out += struct.pack(">H", len(value))
+            out += value
         assert self.length() == len(out)
         return out
 
@@ -277,16 +285,18 @@ class Field(object):
         length = _FIELD_HEADER_SZ
         fl_magic, fl_type, fl_key, fl_ts = struct.unpack(">BBHI", mmap_[offset:offset+_FIELD_HEADER_SZ])
         assert fl_magic == _FIELD_MAGIC
-        assert fl_type in (FL_TYPE_INT, FL_TYPE_BYTES)
+        assert fl_type in (FL_TYPE_INT, FL_TYPE_BYTES, FL_TYPE_STR)
         offset += _FIELD_HEADER_SZ
         if fl_type == FL_TYPE_INT:
             value = struct.unpack(">I", mmap_[offset:offset+4])[0]
             length += 4
-        elif fl_type == FL_TYPE_BYTES:
+        elif fl_type in (FL_TYPE_BYTES, FL_TYPE_STR):
             value_len = struct.unpack(">H", mmap_[offset:offset+2])[0]
             offset += 2
             length += 2
             value = mmap_[offset:offset+value_len]
+            if fl_type == FL_TYPE_STR:
+                value = value.decode('utf8')
             length += value_len
         fl = Field(fl_type, fl_key, value, fl_ts)
         return length, fl

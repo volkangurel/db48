@@ -86,10 +86,11 @@ class TestCreateClose(unittest.TestCase):
     def test_insert2(self):
         t = self._open()
         total_space = 0
+        total_num_records = 1000
         records = []
-        for i in range(1000):
+        for i in range(total_num_records):
             fl1 = db48.Field(db48.FL_TYPE_INT, 0, i)
-            fl2 = db48.Field(db48.FL_TYPE_BYTES, 1, ("Hello %d" % i).encode("utf-8"))
+            fl2 = db48.Field(db48.FL_TYPE_STR, 1, "Hello %d" % i)
             fls = db48.FieldList.set((fl1, fl2))
             space = fls.length()
             rid = t.insert(fls)
@@ -102,18 +103,18 @@ class TestCreateClose(unittest.TestCase):
         self.assertTrue(fmes[0].length == db48._REGION_USABLE_SZ - total_space)
         self.assertTrue(fmes[1].length == 0)
         offset = r.offset + db48._REGION_HEADER_SZ
-        for i in range(1000):
+        for i in range(total_num_records):
             rec_magic, rec_len, _ = struct.unpack(">IHH", r.table._mmap[offset:offset+8])
             assert rec_magic == db48._FLS_MAGIC
             assert rec_len <= db48._FLS_HEADER_SZ + 2*db48._FIELD_HEADER_SZ + 4 + 2 + 9
             assert rec_len >= db48._FLS_HEADER_SZ + 2*db48._FIELD_HEADER_SZ + 4 + 2 + 1
             offset += rec_len
-        for i in range(999, -1, -1):
+        for i in range(total_num_records-1, -1, -1):
             fls = t.lookup(records[i])
             self.assertTrue(fls.fls[0].key == 0)
             self.assertTrue(fls.fls[0].value == i)
             self.assertTrue(fls.fls[1].key == 1)
-            self.assertTrue(fls.fls[1].value == "Hello %d" %i)
+            self.assertTrue(fls.fls[1].value == "Hello %d" % i)
         t.close()
 
 unittest.main()
