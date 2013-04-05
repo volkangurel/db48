@@ -4,6 +4,7 @@ import struct
 
 import db48
 
+
 class TestCreateClose(unittest.TestCase):
     path = "/tmp/t.db48"
 
@@ -43,7 +44,7 @@ class TestCreateClose(unittest.TestCase):
         t = self._open()
         region = t._find_region_with_space(78)
         self.assertTrue(region.offset == db48._TABLE_HEADER_SZ)  # first region
-        self.assertRaises(db48.NoSpace, t._find_region_with_space, 64 * 1024 + 1) # too big
+        self.assertRaises(db48.NoSpace, t._find_region_with_space, 64 * 1024 + 1)  # too big
 
     def test_insert(self):
         t = self._open()
@@ -79,7 +80,7 @@ class TestCreateClose(unittest.TestCase):
         self.assertTrue(fls.fls[0].value == 42)
         self.assertTrue(fls.fls[0].key == 0)
         self.assertTrue(fls.fls[1].value == msg)
-        self.assertTrue(fls.fls[1].key == 13)        
+        self.assertTrue(fls.fls[1].key == 13)
         t.close()
 
     def test_insert2(self):
@@ -116,4 +117,3 @@ class TestCreateClose(unittest.TestCase):
         t.close()
 
 unittest.main()
-

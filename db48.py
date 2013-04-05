@@ -13,7 +13,7 @@ _TABLE_EPOCH = 1364768380
 
 _REGION_NUM_FMES = 1024
 _REGION_FME_SZ = 4
-_REGION_SZ = 64*1024
+_REGION_SZ = 64 * 1024
 _REGION_HEADER_SZ = _REGION_NUM_FMES * _REGION_FME_SZ
 _REGION_USABLE_SZ = _REGION_SZ - _REGION_HEADER_SZ
 
@@ -35,13 +35,16 @@ _FIELD_HEADER_SZ = 8
 FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
 
-class Table:
+
+class Table(object):
 
     def __init__(self):
         self.initialized = False
+        self._fd = None
+        self._mmap = None
 
     def create(self, path):
-        assert self.initialized == False
+        assert not self.initialized
         self._fd = os.open(path, os.O_RDWR | os.O_CREAT)
         os.lseek(self._fd, _TABLE_SZ-1, os.SEEK_SET)
         os.write(self._fd, '\x00')
@@ -56,7 +59,7 @@ class Table:
         self.initialized = True
 
     def open(self, path):
-        assert self.initialized == False
+        assert not self.initialized
         self._fd = os.open(path, os.O_RDWR)
         self._mmap = mmap.mmap(self._fd, _TABLE_SZ)
         magic = struct.unpack(">I", self._mmap[_TABLE_MAGIC_OFF:_TABLE_MAGIC_OFF+4])[0]
@@ -114,9 +117,9 @@ class Table:
         region_summaries = struct.unpack_from(">" + "B"*_TABLE_NUM_REGIONS, self._mmap[_TABLE_REGION_SUMMARY_OFF:])
         tries = 0
         for ndx in range(_TABLE_NUM_REGIONS):
-            percent_full = float(region_summaries[ndx]) / 100.0            
+            percent_full = float(region_summaries[ndx]) / 100.0
             free_space = _REGION_USABLE_SZ * (1.0 - percent_full)
-            if free_space >= space and percent_full <= 0.95 :
+            if free_space >= space and percent_full <= 0.95:
                 return Region(self, ndx)
         raise NoSpace()
 
@@ -124,8 +127,9 @@ class Table:
         ndx = rec_addr / _REGION_USABLE_SZ
         return Region(self, ndx)
 
-class Region:
-    
+
+class Region(object):
+
     #
     # Invariants:
     #
@@ -145,7 +149,7 @@ class Region:
 
     def __init__(self, table, ndx):
         self.table = table
-        self.offset = _TABLE_HEADER_SZ+ndx*_REGION_SZ
+        self.offset = _TABLE_HEADER_SZ + ndx*_REGION_SZ
         self.ndx = ndx
 
     def create(self):
@@ -168,7 +172,7 @@ class Region:
         temp_fmes = self._load_fmes()
         for i in range(len(temp_fmes)):
             assert fmes[i].length == temp_fmes[i].length
-    
+
     def insert(self, fls, space):
         fmes = self._load_fmes()
         assert fmes[1].offset == 0
@@ -180,7 +184,7 @@ class Region:
             if fmes[i].length == space:
                 assert False
                 del fmes[i]
-                empty_fme = FME(0, 0)
+                empty_fme = self.FME(0, 0)
                 fmes.append(empty_fme)
             else:
                 fmes[i].offset += space
@@ -199,7 +203,8 @@ class Region:
         fls = FieldList.load(offset, self.table._mmap)
         return fls
 
-class FieldList:
+
+class FieldList(object):
     def __init__(self, fls):
         self.fls = fls
 
@@ -216,32 +221,33 @@ class FieldList:
     def length(self):
         return _FLS_HEADER_SZ + sum([fl.length() for fl in self.fls])
 
-    def store(self, offset, mmap):
+    def store(self, offset, mmap_):
         raw_fls = "".join([fl.as_raw() for fl in self.fls])
         raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, 0)
         assert len(raw_header) == _FLS_HEADER_SZ
         raw = raw_header + raw_fls
         assert self.length() == len(raw)
-        mmap[offset:offset+len(raw)] = raw
+        mmap_[offset:offset+len(raw)] = raw
 
     @staticmethod
-    def load(offset, mmap):
+    def load(offset, mmap_):
         fls = []
-        rec_magic, rec_len, _ = struct.unpack(">IHH", mmap[offset:offset+8])
+        rec_magic, rec_len, _ = struct.unpack(">IHH", mmap_[offset:offset+8])
         assert rec_magic == _FLS_MAGIC
         offset += 8
         rec_len -= 8
         while rec_len > 0:
-            fl_len, fl = Field.from_raw(offset, mmap)
+            fl_len, fl = Field.from_raw(offset, mmap_)
             rec_len -= fl_len
             offset += fl_len
             fls.append(fl)
         assert rec_len == 0
         return FieldList(fls)
 
-class Field:
-    def __init__(self, type, key, value, ts=None):
-        self.type = type
+
+class Field(object):
+    def __init__(self, type_, key, value, ts=None):
+        self.type = type_
         self.key = key
         self.value = value
         self.ts = ts
@@ -267,23 +273,24 @@ class Field:
         return out
 
     @staticmethod
-    def from_raw(offset, mmap):
+    def from_raw(offset, mmap_):
         length = _FIELD_HEADER_SZ
-        fl_magic, fl_type, fl_key, fl_ts = struct.unpack(">BBHI", mmap[offset:offset+_FIELD_HEADER_SZ])
+        fl_magic, fl_type, fl_key, fl_ts = struct.unpack(">BBHI", mmap_[offset:offset+_FIELD_HEADER_SZ])
         assert fl_magic == _FIELD_MAGIC
         assert fl_type in (FL_TYPE_INT, FL_TYPE_BYTES)
         offset += _FIELD_HEADER_SZ
         if fl_type == FL_TYPE_INT:
-            value = struct.unpack(">I", mmap[offset:offset+4])[0]
+            value = struct.unpack(">I", mmap_[offset:offset+4])[0]
             length += 4
         elif fl_type == FL_TYPE_BYTES:
-            value_len = struct.unpack(">H", mmap[offset:offset+2])[0]
+            value_len = struct.unpack(">H", mmap_[offset:offset+2])[0]
             offset += 2
             length += 2
-            value = mmap[offset:offset+value_len]
+            value = mmap_[offset:offset+value_len]
             length += value_len
         fl = Field(fl_type, fl_key, value, fl_ts)
         return length, fl
+
 
 class NoSpace(Exception):
     pass
