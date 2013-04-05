@@ -73,21 +73,20 @@ class Table(object):
         return rec_addr
 
     def _insert(self, fls):
-        space = fls.length()
-        region = self._find_region_with_space(space)
-        rec_addr = region.insert(fls, space)
+        region = self._find_region_with_space(fls.length())
+        rec_addr = region.insert(fls)
         return rec_addr
 
     def update(self, rec_addr, fls):
         assert self.initialized
         existing_fls, region = self._lookup(rec_addr)
-        if existing_fls.length() < fls.length():
+        existing_length = existing_fls.length()
+        existing_fls.update(fls)
+        if existing_length < fls.length():
             self._delete(rec_addr, region)
-            existing_fls.update(fls)
             self._insert(existing_fls)
         else:
-            existing_fls.update(fls)
-            region.update(existing_fls)
+            region.update(rec_addr, existing_fls)
 
     def delete(self, rec_addr):
         assert self.initialized
@@ -174,7 +173,8 @@ class Region(object):
         for i in range(len(temp_fmes)):
             assert fmes[i].length == temp_fmes[i].length
 
-    def insert(self, fls, space):
+    def insert(self, fls):
+        space = fls.length()
         fmes = self._load_fmes()
         assert fmes[1].offset == 0
         assert fmes[1].length == 0
@@ -198,6 +198,14 @@ class Region(object):
             return rec_addr
         raise NoSpace()
 
+    def update(self, rec_addr, fls):
+        rec_off_in_region = rec_addr % _REGION_USABLE_SZ
+        offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
+        fls.store(offset, self.table._mmap)
+
+    def delete(self, rec_addr):
+        raise NotImplementedError()
+
     def read(self, rec_addr):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
         offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
@@ -214,16 +222,36 @@ class FieldList(object):
         assert len(fls) > 0
         fls = list(fls)
         fls.sort(key=lambda x: x.key)
-        ts = int((time.time() - _TABLE_EPOCH) * 1000)
+        ts = _get_time()
         for fl in fls:
             fl.ts = ts
         return FieldList(fls)
 
+    def update(self, new_field_list):
+        new_fls = new_field_list.fls
+        if not new_fls: return
+        new_fls.sort(key=lambda x: x.key)
+        index = self.index()
+        ts = _get_time()
+        for new_fl in new_fls:
+            new_fl.ts = ts
+            fl = index.get(new_fl.key)
+            if fl is None:
+                self.fls.append(new_fl)
+            else:
+                fl.update(new_fl)
+
+    def index(self):
+        index = {}
+        for fl in self.fls:
+            index[fl.key] = fl
+        return index
+
     def length(self):
-        return _FLS_HEADER_SZ + sum([fl.length() for fl in self.fls])
+        return _FLS_HEADER_SZ + sum(fl.length() for fl in self.fls)
 
     def store(self, offset, mmap_):
-        raw_fls = b"".join([fl.as_raw() for fl in self.fls])
+        raw_fls = b"".join(fl.as_raw() for fl in self.fls)
         raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, 0)
         assert len(raw_header) == _FLS_HEADER_SZ
         raw = raw_header + raw_fls
@@ -247,6 +275,8 @@ class FieldList(object):
 
 
 class Field(object):
+    __slots__ = ['type', 'key', 'value', 'ts']
+
     def __init__(self, type_, key, value, ts=None):
         self.type = type_
         self.key = key
@@ -301,6 +331,14 @@ class Field(object):
         fl = Field(fl_type, fl_key, value, fl_ts)
         return length, fl
 
+    def update(self, new_fl):
+        for k in self.__slots__:
+            setattr(self, k, getattr(new_fl, k))
+
 
 class NoSpace(Exception):
     pass
+
+
+def _get_time():
+    return int((time.time() - _TABLE_EPOCH) * 1000)
