@@ -133,16 +133,16 @@ class TestCreateClose(unittest.TestCase):
             self.assertTrue(fls.fls[0].value == i)
             self.assertTrue(fls.fls[1].key == 1)
             self.assertTrue(fls.fls[1].value == "Hello %d" % i)
-        for i, rid in enumerate(records):
-            new_fl = db48.Field(db48.FL_TYPE_STR, 1, "Hello %d" % (i + 1))
+        for i in range(total_num_records):
+            new_fl = db48.Field(db48.FL_TYPE_STR, 1, "Hello %d" % (i + 100000))
             new_fls = db48.FieldList.set((new_fl,))
-            t.update(rid, new_fls)
+            records[i] = t.update(records[i], new_fls)
         for i in range(total_num_records-1, -1, -1):
             fls = t.lookup(records[i])
             self.assertTrue(fls.fls[0].key == 0)
             self.assertTrue(fls.fls[0].value == i)
             self.assertTrue(fls.fls[1].key == 1)
-            self.assertTrue(fls.fls[1].value == "Hello %d" % (i + 1))
+            self.assertTrue(fls.fls[1].value == "Hello %d" % (i + 100000))
         t.close()
 
     def test_delete(self):

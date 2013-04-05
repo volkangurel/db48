@@ -85,11 +85,12 @@ class Table(object):
         existing_fls, region = self._lookup(rec_addr)
         existing_length = existing_fls.length()
         existing_fls.update(fls)
-        if existing_length < fls.length():
+        if existing_length < existing_fls.length():
             self._delete(rec_addr, region)
-            self._insert(existing_fls)
+            return self._insert(existing_fls)
         else:
             region.update(rec_addr, existing_fls)
+            return rec_addr
 
     def delete(self, rec_addr):
         assert self.initialized
