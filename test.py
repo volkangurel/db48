@@ -143,7 +143,28 @@ class TestCreateClose(unittest.TestCase):
             self.assertTrue(fls.fls[0].value == i)
             self.assertTrue(fls.fls[1].key == 1)
             self.assertTrue(fls.fls[1].value == "Hello %d" % (i + 1))
+        t.close()
 
+    def test_delete(self):
+        t = self._open()
+        total_num_records = 3
+        records = []
+        for i in range(total_num_records):
+            fl1 = db48.Field(db48.FL_TYPE_INT, 0, i)
+            fl2 = db48.Field(db48.FL_TYPE_STR, 1, "Hello %d" % i)
+            fls = db48.FieldList.set((fl1, fl2))
+            rid = t.insert(fls)
+            records.append(rid)
+        for i in range(total_num_records-1, -1, -1):
+            fls = t.lookup(records[i])
+            self.assertTrue(fls.fls[0].key == 0)
+            self.assertTrue(fls.fls[0].value == i)
+            self.assertTrue(fls.fls[1].key == 1)
+            self.assertTrue(fls.fls[1].value == "Hello %d" % i)
+        for rid in records:
+            t.delete(rid)
+        for i in range(total_num_records-1, -1, -1):
+            self.assertRaises(db48.RecordDeleted, t.lookup, records[i])
         t.close()
 
 unittest.main()

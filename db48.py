@@ -36,6 +36,9 @@ FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
 FL_TYPE_STR = 3
 
+REC_STATUS_OK = 0
+REC_STATUS_DELETED = 1
+
 
 class Table(object):
 
@@ -204,7 +207,9 @@ class Region(object):
         fls.store(offset, self.table._mmap)
 
     def delete(self, rec_addr):
-        raise NotImplementedError()
+        rec_off_in_region = rec_addr % _REGION_USABLE_SZ
+        offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
+        FieldList.delete(offset, self.table._mmap)
 
     def read(self, rec_addr):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
@@ -252,7 +257,7 @@ class FieldList(object):
 
     def store(self, offset, mmap_):
         raw_fls = b"".join(fl.as_raw() for fl in self.fls)
-        raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, 0)
+        raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, REC_STATUS_OK)
         assert len(raw_header) == _FLS_HEADER_SZ
         raw = raw_header + raw_fls
         assert self.length() == len(raw)
@@ -261,8 +266,10 @@ class FieldList(object):
     @staticmethod
     def load(offset, mmap_):
         fls = []
-        rec_magic, rec_len, _ = struct.unpack(">IHH", mmap_[offset:offset+8])
+        rec_magic, rec_len, rec_deleted = struct.unpack(">IHH", mmap_[offset:offset+8])
         assert rec_magic == _FLS_MAGIC
+        if rec_deleted == REC_STATUS_DELETED:
+            raise RecordDeleted()
         offset += 8
         rec_len -= 8
         while rec_len > 0:
@@ -272,6 +279,11 @@ class FieldList(object):
             fls.append(fl)
         assert rec_len == 0
         return FieldList(fls)
+
+    @staticmethod
+    def delete(offset, mmap_):
+        raw = struct.pack(">IHH", _FLS_MAGIC, 0, REC_STATUS_DELETED)
+        mmap_[offset:offset+len(raw)] = raw
 
 
 class Field(object):
@@ -337,6 +349,10 @@ class Field(object):
 
 
 class NoSpace(Exception):
+    pass
+
+
+class RecordDeleted(Exception):
     pass
 
 
