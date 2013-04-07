@@ -2,6 +2,7 @@ import os
 import mmap
 import struct
 import time
+import logging
 
 _TABLE_NUM_REGIONS = 1024
 _TABLE_HEADER_SZ = 4096 + _TABLE_NUM_REGIONS
@@ -34,6 +35,19 @@ _FIELD_HEADER_SZ = 8
 
 FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
+
+
+def get_logger(name):
+    level = logging.DEBUG if 'DEBUG' in os.environ else logging.INFO
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    logger = logging.Logger(name)
+    logger.setLevel(level)
+    logger.addHandler(handler)
+    return logger
+_logger = get_logger(__name__)
 
 
 class Table(object):
@@ -163,6 +177,7 @@ class Region(object):
         raw_fmes = struct.unpack(">" + "HH"*_REGION_NUM_FMES, self.table._mmap[self.offset:self.offset+_REGION_HEADER_SZ])
         assert len(raw_fmes) == 2 * _REGION_NUM_FMES
         fmes = [self.FME(raw_fmes[2*i], raw_fmes[2*i+1]) for i in range(_REGION_NUM_FMES)]
+        _logger.debug('loaded FMEs %s' % ', '.join('(%d,%d)' % (f.offset, f.length) for f in fmes if f.length > 0))
         return fmes
 
     def _store_fmes(self, fmes):
@@ -176,12 +191,13 @@ class Region(object):
 
     def insert(self, fls, space):
         fmes = self._load_fmes()
-        assert fmes[1].offset == 0
-        assert fmes[1].length == 0
+        # assert fmes[1].offset == 0
+        # assert fmes[1].length == 0
         for i in range(_REGION_NUM_FMES):
             if fmes[i].length == 0: break   # length == 0 means we're at end of valid fmes
             if fmes[i].length < space: continue
-            rec_addr = fmes[i].offset + self.ndx * _REGION_USABLE_SZ
+            _logger.debug('inserting %d bytes at %d' % (space, fmes[i].offset))
+            rec_addr = fmes[i].offset + self.ndx*_REGION_USABLE_SZ
             if fmes[i].length == space:
                 assert False
                 del fmes[i]
@@ -190,8 +206,8 @@ class Region(object):
             else:
                 fmes[i].offset += space
                 fmes[i].length -= space
-            assert fmes[1].offset == 0
-            assert fmes[1].length == 0
+            # assert fmes[i+1].offset == 0
+            # assert fmes[i+1].length == 0
             self._store_fmes(fmes)
             rec_offset = rec_addr + (self.ndx + 1) * _REGION_HEADER_SZ + _TABLE_HEADER_SZ
             fls.store(rec_offset, self.table._mmap)
@@ -201,18 +217,62 @@ class Region(object):
     def update(self, rec_addr, fls):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
         offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
+        _logger.debug('updating record at %d' % (rec_off_in_region))
         fls.store(offset, self.table._mmap)
 
     def delete(self, rec_addr):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
         offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
-        FieldList.delete(offset, self.table._mmap)
+        rec_len = FieldList.delete(offset, self.table._mmap)
+        _logger.debug('deleting %d bytes at %d' % (rec_len, rec_off_in_region))
+        self._free_up_space(rec_off_in_region, rec_len)
 
     def read(self, rec_addr):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
         offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
         fls = FieldList.load(offset, self.table._mmap)
         return fls
+
+    def _free_up_space(self, offset, length):  # offset in region
+        _logger.debug('freeing up %d bytes at %d' % (length, offset))
+        fmes = self._load_fmes()
+        len_fmes = len(fmes)
+        new_lower, new_upper = offset, offset + length
+        for i in range(len_fmes):
+            fme = fmes[i]
+            assert fme.length != 0
+            fme_lower, fme_upper = fme.offset, fme.offset + fme.length
+            if fme_upper < new_lower:
+                # this fme is too low, continue
+                continue
+            elif fme_upper == new_lower:
+                # then extend this fme upward
+                fme.length += length
+                if len_fmes > (i+1):
+                    next_fme = fmes[i+2]
+                    if next_fme.offset == (fme.offset + fme.length):
+                        # then merge with the next one
+                        fme.length += next_fme.length
+                        del fmes[i+1]
+                        fmes.append(self.FME(0, 0))
+                break
+            # now fme_upper > new_lower
+            elif fme_lower < new_upper:
+                # this should never happen (overlapping existing FME with new FME)
+                raise Exception('cannot free up space within an FME')
+            elif fme_lower == new_upper:
+                # then extend this fme downward
+                fme.offset -= length
+                # previous if statement is guaranteed to handle the case where this would touch another fme, so break
+                break
+            else:  # fme_lower > new_upper:
+                # create a new fme here
+                assert fmes[-1].length == 0  # TODO clean up fmes if they get too fragmented
+                fmes.insert(i, self.FME(offset, length))
+                del fmes[-1:]
+                break
+        _logger.debug('new FMEs %s' % ', '.join('(%d,%d)' % (f.offset, f.length) for f in fmes if f.length > 0))
+        self._store_fmes(fmes)
 
 
 class FieldList(object):
@@ -279,8 +339,11 @@ class FieldList(object):
 
     @staticmethod
     def delete(offset, mmap_):
+        rec_magic, rec_len, _ = struct.unpack(">IHH", mmap_[offset:offset+8])
+        assert rec_magic == _FLS_MAGIC
         raw = struct.pack(">IHH", _FLS_MAGIC, 0, 0)
         mmap_[offset:offset+len(raw)] = raw
+        return rec_len
 
 
 class Field(object):
