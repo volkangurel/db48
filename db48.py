@@ -73,8 +73,9 @@ class Table(object):
         return rec_addr
 
     def _insert(self, fls):
-        region = self._find_region_with_space(fls.length())
-        rec_addr = region.insert(fls)
+        space = fls.length()
+        region = self._find_region_with_space(space)
+        rec_addr = region.insert(fls, space)
         return rec_addr
 
     def update(self, rec_addr, fls):
@@ -174,8 +175,7 @@ class Region(object):
         for i in range(len(temp_fmes)):
             assert fmes[i].length == temp_fmes[i].length
 
-    def insert(self, fls):
-        space = fls.length()
+    def insert(self, fls, space):
         fmes = self._load_fmes()
         assert fmes[1].offset == 0
         assert fmes[1].length == 0
