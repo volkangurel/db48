@@ -36,9 +36,6 @@ FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
 FL_TYPE_STR = 3
 
-REC_STATUS_OK = 0
-REC_STATUS_DELETED = 1
-
 
 class Table(object):
 
@@ -258,7 +255,7 @@ class FieldList(object):
 
     def store(self, offset, mmap_):
         raw_fls = b"".join(fl.as_raw() for fl in self.fls)
-        raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, REC_STATUS_OK)
+        raw_header = struct.pack(">IHH", _FLS_MAGIC, len(raw_fls) + _FLS_HEADER_SZ, 0)
         assert len(raw_header) == _FLS_HEADER_SZ
         raw = raw_header + raw_fls
         assert self.length() == len(raw)
@@ -267,9 +264,9 @@ class FieldList(object):
     @staticmethod
     def load(offset, mmap_):
         fls = []
-        rec_magic, rec_len, rec_deleted = struct.unpack(">IHH", mmap_[offset:offset+8])
+        rec_magic, rec_len, _ = struct.unpack(">IHH", mmap_[offset:offset+8])
         assert rec_magic == _FLS_MAGIC
-        if rec_deleted == REC_STATUS_DELETED:
+        if rec_len == 0:
             raise RecordDeleted()
         offset += 8
         rec_len -= 8
@@ -283,7 +280,7 @@ class FieldList(object):
 
     @staticmethod
     def delete(offset, mmap_):
-        raw = struct.pack(">IHH", _FLS_MAGIC, 0, REC_STATUS_DELETED)
+        raw = struct.pack(">IHH", _FLS_MAGIC, 0, 0)
         mmap_[offset:offset+len(raw)] = raw
 
 
