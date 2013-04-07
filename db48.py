@@ -34,7 +34,6 @@ _FIELD_HEADER_SZ = 8
 
 FL_TYPE_INT = 1
 FL_TYPE_BYTES = 2
-FL_TYPE_STR = 3
 
 
 class Table(object):
@@ -300,9 +299,6 @@ class Field(object):
         elif self.type == FL_TYPE_BYTES:
             length += 2
             length += len(self.value)
-        elif self.type == FL_TYPE_STR:
-            length += 2
-            length += len(self.value.encode())
         return length
 
     def as_raw(self):
@@ -313,10 +309,6 @@ class Field(object):
         elif self.type == FL_TYPE_BYTES:
             out += struct.pack(">H", len(self.value))
             out += self.value
-        elif self.type == FL_TYPE_STR:
-            value = self.value.encode('utf8')
-            out += struct.pack(">H", len(value))
-            out += value
         assert self.length() == len(out)
         return out
 
@@ -325,18 +317,16 @@ class Field(object):
         length = _FIELD_HEADER_SZ
         fl_magic, fl_type, fl_key, fl_ts = struct.unpack(">BBHI", mmap_[offset:offset+_FIELD_HEADER_SZ])
         assert fl_magic == _FIELD_MAGIC
-        assert fl_type in (FL_TYPE_INT, FL_TYPE_BYTES, FL_TYPE_STR)
+        assert fl_type in (FL_TYPE_INT, FL_TYPE_BYTES, )
         offset += _FIELD_HEADER_SZ
         if fl_type == FL_TYPE_INT:
             value = struct.unpack(">I", mmap_[offset:offset+4])[0]
             length += 4
-        elif fl_type in (FL_TYPE_BYTES, FL_TYPE_STR):
+        elif fl_type == FL_TYPE_BYTES:
             value_len = struct.unpack(">H", mmap_[offset:offset+2])[0]
             offset += 2
             length += 2
             value = mmap_[offset:offset+value_len]
-            if fl_type == FL_TYPE_STR:
-                value = value.decode('utf8')
             length += value_len
         fl = Field(fl_type, fl_key, value, fl_ts)
         return length, fl
