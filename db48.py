@@ -94,14 +94,13 @@ class Table(object):
     def update(self, rec_addr, fls):
         assert self.initialized
         existing_fls, region = self._lookup(rec_addr)
-        existing_length = existing_fls.length()
-        existing_fls.update(fls)
-        if existing_length < existing_fls.length():
+        new_length, old_length = existing_fls.update(fls)
+        if new_length > old_length:
+            _logger.debug('will need %d extra bytes' % (new_length - old_length))
             self._delete(rec_addr, region)
             return self._insert(existing_fls)
         else:
-            region.update(rec_addr, existing_fls)
-            return rec_addr
+            return region.update(rec_addr, existing_fls, new_length, old_length)
 
     def delete(self, rec_addr):
         assert self.initialized
@@ -214,11 +213,14 @@ class Region(object):
             return rec_addr
         raise NoSpace()
 
-    def update(self, rec_addr, fls):
+    def update(self, rec_addr, fls, new_length, old_length):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
         offset = self.offset + _REGION_HEADER_SZ + rec_off_in_region
         _logger.debug('updating record at %d' % (rec_off_in_region))
         fls.store(offset, self.table._mmap)
+        if old_length > new_length:
+            self._free_up_space(rec_off_in_region + new_length, old_length - new_length)
+        return rec_addr
 
     def delete(self, rec_addr):
         rec_off_in_region = rec_addr % _REGION_USABLE_SZ
@@ -291,7 +293,8 @@ class FieldList(object):
 
     def update(self, new_field_list):
         new_fls = new_field_list.fls
-        if not new_fls: return
+        if not new_fls: return 0
+        existing_length = self.length()
         new_fls.sort(key=lambda x: x.key)
         index = self.index()
         ts = _get_time()
@@ -302,6 +305,7 @@ class FieldList(object):
                 self.fls.append(new_fl)
             else:
                 fl.update(new_fl)
+        return self.length(), existing_length
 
     def index(self):
         index = {}

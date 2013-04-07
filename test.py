@@ -117,7 +117,35 @@ class TestCreateClose(unittest.TestCase):
             self.assertTrue(fls.fls[1].value.decode() == "Hello %d" % i)
         t.close()
 
-    def test_update(self):
+    def test_update1(self):
+        t = self._open()
+        total_num_records = 3
+        records = []
+        for i in range(total_num_records):
+            fl1 = db48.Field(db48.FL_TYPE_INT, 0, i)
+            fl2 = db48.Field(db48.FL_TYPE_BYTES, 1, ("Hello %d" % (i + 100000)).encode())
+            fls = db48.FieldList.set((fl1, fl2))
+            rid = t.insert(fls)
+            records.append(rid)
+        for i in range(total_num_records-1, -1, -1):
+            fls = t.lookup(records[i])
+            self.assertTrue(fls.fls[0].key == 0)
+            self.assertTrue(fls.fls[0].value == i)
+            self.assertTrue(fls.fls[1].key == 1)
+            self.assertTrue(fls.fls[1].value.decode() == "Hello %d" % (i + 100000))
+        for i in range(total_num_records):
+            new_fl = db48.Field(db48.FL_TYPE_BYTES, 1, ("Hello %d" % i).encode())
+            new_fls = db48.FieldList.set((new_fl,))
+            records[i] = t.update(records[i], new_fls)
+        for i in range(total_num_records-1, -1, -1):
+            fls = t.lookup(records[i])
+            self.assertTrue(fls.fls[0].key == 0)
+            self.assertTrue(fls.fls[0].value == i)
+            self.assertTrue(fls.fls[1].key == 1)
+            self.assertTrue(fls.fls[1].value.decode() == "Hello %d" % i)
+        t.close()
+
+    def test_update2(self):
         t = self._open()
         total_num_records = 3
         records = []
